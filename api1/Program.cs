@@ -79,6 +79,19 @@ app.MapGet("/keyvault", [Authorize(Policy = "Api1Scope")] async (HttpContext con
     return Results.Ok(new { secret = secret.Value.Value });
 });
 
+// Get token's expiration time in minutes
+app.MapGet("/token", [Authorize(Policy = "Api1Scope")] (HttpContext context) =>
+{
+    var expiresOn = context.User.FindFirst("exp")?.Value;
+    if (string.IsNullOrEmpty(expiresOn))
+    {
+        return Results.Unauthorized();
+    }
+    var expiresOnDateTime = DateTimeOffset.FromUnixTimeSeconds(long.Parse(expiresOn));
+    var expiresInMinutes = (expiresOnDateTime - DateTimeOffset.UtcNow).TotalMinutes;
+    return Results.Ok(new { expiresInMinutes });
+});
+
 app.Run();
 
 /// ✅ Helper: Acquire token for Key Vault using OBO flow
