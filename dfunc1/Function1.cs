@@ -1,4 +1,6 @@
 using Azure.Core;
+using Azure.Identity;
+using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -6,6 +8,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace dfunc1
 {
@@ -24,25 +27,48 @@ namespace dfunc1
             [OrchestrationTrigger] TaskOrchestrationContext context)
         {
             ILogger logger = context.CreateReplaySafeLogger(nameof(Function1));
-            logger.LogInformation("Saying hello.");
             var outputs = new List<string>();
 
-            // Replace name and input with values relevant for your Durable Functions Activity
-            outputs.Add(await context.CallActivityAsync<string>(nameof(SayHello), "Tokyo"));
-            outputs.Add(await context.CallActivityAsync<string>(nameof(SayHello), "Seattle"));
-            outputs.Add(await context.CallActivityAsync<string>(nameof(SayHello), "London"));
+            outputs.Add(await context.CallActivityAsync<string>(nameof(GetAllBlobs)));
 
-            // returns ["Hello Tokyo!", "Hello Seattle!", "Hello London!"]
             return outputs;
         }
 
-        [Function(nameof(SayHello))]
-        [Authorize(Policy = "DFunc1Scope")]
-        public string SayHello([ActivityTrigger] string name, FunctionContext executionContext)
+        [Function(nameof(GetAllBlobs))]
+        public async static Task<string> GetAllBlobs([ActivityTrigger] FunctionContext executionContext)
         {
-            ILogger logger = executionContext.GetLogger("SayHello");
-            logger.LogInformation("Saying hello to {name}.", name);
-            return $"Hello {name}!";
+            string storageAccountName = "stodemoobo";
+            string containerName = "xyz";
+            string blobServiceUri = $"https://{storageAccountName}.blob.core.windows.net/";
+
+            var logger = executionContext.GetLogger(nameof(GetAllBlobs));
+            var blobNames = new List<string>();
+
+            try
+            {
+                var blobServiceClient = new BlobServiceClient(new Uri(blobServiceUri), new DefaultAzureCredential());
+                var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
+
+                logger.LogInformation($"Listing blobs in container '{containerName}':");
+
+                await foreach (var blobItem in containerClient.GetBlobsAsync())
+                {
+                    logger.LogInformation($"- {blobItem.Name}");
+                    blobNames.Add(blobItem.Name);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"An error occurred while listing blobs: {ex.Message}");
+                throw;
+            }
+
+            var response = new
+            {
+                Blobs = blobNames
+            };
+
+            return JsonSerializer.Serialize(response);
         }
 
         [Function("Function1_HttpStart")]
