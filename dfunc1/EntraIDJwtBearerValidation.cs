@@ -18,7 +18,7 @@ public class EntraIDJwtBearerValidation : IEntraIDJwtBearerValidation
     private string? _tenantId = string.Empty;
     private string? _audience = string.Empty;
     private string? _instance = string.Empty;
-    private string _requiredScope = "apim.access.readwrite";
+    private string _requiredScope = "dfunc1.readwrite";
 
     public EntraIDJwtBearerValidation(IConfiguration configuration, ILoggerFactory loggerFactory)
     {
