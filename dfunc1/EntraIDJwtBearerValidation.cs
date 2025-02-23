@@ -20,6 +20,8 @@ public class EntraIDJwtBearerValidation : IEntraIDJwtBearerValidation
     private string? _instance = string.Empty;
     private string _requiredScope = "dfunc1.readwrite";
 
+    public string Token { get; set; }
+
     public EntraIDJwtBearerValidation(IConfiguration configuration, ILoggerFactory loggerFactory)
     {
         _configuration = configuration;
@@ -76,6 +78,7 @@ public class EntraIDJwtBearerValidation : IEntraIDJwtBearerValidation
 
             if (tokenValidationResult.IsValid && IsScopeValid(_requiredScope, tokenValidationResult.ClaimsIdentity))
             {
+                Token = accessToken;
                 return tokenValidationResult;
             }
 

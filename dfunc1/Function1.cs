@@ -1,5 +1,6 @@
 using Azure.Core;
 using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
 using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -7,7 +8,9 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Identity.Client;
 using System.Text.Json;
 
 namespace dfunc1
@@ -16,27 +19,34 @@ namespace dfunc1
     public class Function1
     {
         private readonly IEntraIDJwtBearerValidation _entra;
+        private readonly IConfiguration _configuration;
 
-        public Function1(IEntraIDJwtBearerValidation entra)
+        public Function1(IEntraIDJwtBearerValidation entra, IConfiguration configuration)
         {
             this._entra = entra;
+            this._configuration = configuration;
         }
 
         [Function(nameof(Function1))]
         public async Task<List<string>> RunOrchestrator(
             [OrchestrationTrigger] TaskOrchestrationContext context)
         {
+            // Retrieve the token passed from the starter function
+            var token = context.GetInput<string>();
+
             ILogger logger = context.CreateReplaySafeLogger(nameof(Function1));
             var outputs = new List<string>();
 
-            outputs.Add(await context.CallActivityAsync<string>(nameof(GetAllBlobs)));
+            outputs.Add(await context.CallActivityAsync<string>(nameof(GetAllBlobs), token));
 
             return outputs;
         }
 
         [Function(nameof(GetAllBlobs))]
-        public async static Task<string> GetAllBlobs([ActivityTrigger] FunctionContext executionContext)
+        public async Task<string> GetAllBlobs([ActivityTrigger] string token, FunctionContext executionContext)
         {
+            var storageToken = await AcquireTokenOnBehalfOfUserAsync(token, _configuration["AzureAd:TenantId"], _configuration["AzureAd:ClientId"], _configuration["AzureAd:ClientSecret"]);
+
             string storageAccountName = "stodemoobo";
             string containerName = "xyz";
             string blobServiceUri = $"https://{storageAccountName}.blob.core.windows.net/";
@@ -46,7 +56,7 @@ namespace dfunc1
 
             try
             {
-                var blobServiceClient = new BlobServiceClient(new Uri(blobServiceUri), new DefaultAzureCredential());
+                var blobServiceClient = new BlobServiceClient(new Uri(blobServiceUri), new AccessTokenCredential(storageToken));
                 var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
 
                 logger.LogInformation($"Listing blobs in container '{containerName}':");
@@ -91,15 +101,45 @@ namespace dfunc1
                 throw new UnauthorizedAccessException();
             }
 
-            // Function input comes from the request content.
             string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
-                nameof(Function1));
+                nameof(Function1),
+                _entra.Token);
 
             logger.LogInformation("Started orchestration with ID = '{instanceId}'.", instanceId);
 
-            // Returns an HTTP 202 response with an instance management payload.
-            // See https://learn.microsoft.com/azure/azure-functions/durable/durable-functions-http-api#start-orchestration
             return await client.CreateCheckStatusResponseAsync(req, instanceId);
         }
+
+        async Task<string> AcquireTokenOnBehalfOfUserAsync(string userAccessToken, string tenantId, string clientId, string clientSecret)
+        {
+            var appConfidential = ConfidentialClientApplicationBuilder
+                .Create(clientId)
+                .WithClientSecret(clientSecret)
+                .WithAuthority(new Uri($"https://login.microsoftonline.com/{tenantId}"))
+                .Build();
+
+            var userAssertion = new UserAssertion(userAccessToken);
+            var result = await appConfidential.AcquireTokenOnBehalfOf(new[] { "https://storage.azure.com/.default" }, userAssertion)
+                                              .ExecuteAsync();
+
+            return result.AccessToken;
+        }
+
+        public class AccessTokenCredential : TokenCredential
+        {
+            private readonly string _accessToken;
+
+            public AccessTokenCredential(string accessToken)
+            {
+                _accessToken = accessToken;
+            }
+
+            public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+                => new AccessToken(_accessToken, DateTimeOffset.UtcNow.AddHours(1));
+
+            public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+                => new ValueTask<AccessToken>(new AccessToken(_accessToken, DateTimeOffset.UtcNow.AddHours(1)));
+        }
+
     }
 }

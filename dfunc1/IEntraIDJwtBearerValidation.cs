@@ -12,4 +12,6 @@ public interface IEntraIDJwtBearerValidation
     public Task<OpenIdConnectConfiguration> GetOIDCWellknownConfiguration();
 
     public bool IsScopeValid(string scopeName, ClaimsIdentity claimsIdentity);
+
+    public string Token { get; set; }
 }
